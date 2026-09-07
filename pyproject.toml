@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-paper-hft"
+version = "0.1.0"
+description = "Safe, event-driven multi-asset paper-trading research engine"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Quant Paper HFT" }]
+dependencies = []
+
+[project.optional-dependencies]
+ml = [
+  "joblib>=1.4,<2",
+  "numpy>=2.2,<3",
+  "pandas>=2.2,<3",
+  "scikit-learn>=1.6,<2",
+  "yfinance>=0.2.65,<2",
+]
+paper = [
+  "alpaca-py>=0.42,<1",
+  "python-dotenv>=1,<2",
+]
+data = [
+  "duckdb>=1.4,<2",
+  "exchange-calendars>=4.13,<5",
+  "pandas>=2.2,<3",
+  "python-dotenv>=1,<2",
+  "alpaca-py>=0.42,<1",
+  "requests>=2.32,<3",
+]
+
+[project.scripts]
+quant-paper = "quantpaper.cli:main"
+quant-ml = "quantpaper.ml.cli:main"
+quant-ml2 = "quantpaper.ml.cli2:main"
+quant-alpaca = "quantpaper.alpaca_cli:main"
+quant-warehouse = "quantpaper.warehouse_cli:main"
+quant-sources = "quantpaper.sources_cli:main"
+quant-shadow = "quantpaper.shadow_cli:main"
+quant-research = "quantpaper.research.cli:main"
+quant-marketdata = "quantpaper.marketdata.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"

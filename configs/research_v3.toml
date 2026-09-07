@@ -1,0 +1,28 @@
+# Freeze this specification before evaluating candidates. Costs below are
+# engineering stress assumptions, not a broker fee schedule or execution model.
+protocol_id = "daily_timing_v3_20260907"
+target_contract_version = "daily_timing_v3"
+research_only = true
+executable_backtest = false
+promotion_disabled = true
+historical_cutoff = "2026-09-03"
+forward_start = "2026-09-08"
+position_policy = "long_flat"
+long_threshold = 0.55
+models = ["base_rate", "logistic", "hist_gradient_boosting"]
+
+[validation]
+min_train_sessions = 1260
+test_sessions = 252
+purge_sessions = 5
+max_folds = 6
+
+[groups.equities]
+symbols = ["SPY", "JPM", "XOM", "WMT", "JNJ"]
+costs_bps = [0, 5, 10, 20]
+selected_cost_bps = 5
+
+[groups.crypto]
+symbols = ["BTC-USD"]
+costs_bps = [0, 10, 25, 50]
+selected_cost_bps = 25

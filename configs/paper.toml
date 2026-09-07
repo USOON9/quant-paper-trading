@@ -1,0 +1,18 @@
+[engine]
+starting_cash = "1000000"
+latency_ms = 12
+slippage_bps = "0.50"
+seed = 7
+
+[strategy]
+imbalance_threshold = "0.32"
+momentum_weight = "0.30"
+cooldown_ms = 80
+
+[risk]
+max_order_notional = "25000"
+max_symbol_notional = "75000"
+max_gross_notional = "180000"
+max_daily_loss = "10000"
+max_orders_per_second = 25
+
