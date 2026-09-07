@@ -32,12 +32,21 @@ class SchedulerTests(unittest.TestCase):
     def test_scheduler_requires_closed_order_gates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".env"
-            path.write_text(
-                "ENABLE_ALPACA_PAPER=YES_I_UNDERSTAND\n"
-                "ENABLE_ALPACA_PAPER_ROUND_TRIP=NO\n"
-            )
-            with self.assertRaises(RuntimeError):
-                require_paper_gates_closed(path)
+            gates = {"ENABLE_ALPACA_PAPER": "YES_I_UNDERSTAND",
+                     "ENABLE_ALPACA_PAPER_ROUND_TRIP": "YES_RUN_SMALL_ROUND_TRIP"}
+            for open_gate in gates:
+                with self.subTest(open_gate=open_gate):
+                    path.write_text("\n".join(
+                        f"{name}={enabled if name == open_gate else 'NO'}" for name, enabled in gates.items()
+                    ) + "\n")
+                    # This exercises file configuration, not the caller's
+                    # environment override (CI intentionally sets both to NO).
+                    # Restore every inherited variable when this scope exits.
+                    with patch.dict(os.environ):
+                        for name in gates:
+                            os.environ.pop(name, None)
+                        with self.assertRaises(RuntimeError):
+                            require_paper_gates_closed(path)
 
     def test_environment_open_gate_overrides_closed_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
