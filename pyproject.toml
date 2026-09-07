@@ -42,6 +42,7 @@ quant-warehouse = "quantpaper.warehouse_cli:main"
 quant-sources = "quantpaper.sources_cli:main"
 quant-shadow = "quantpaper.shadow_cli:main"
 quant-research = "quantpaper.research.cli:main"
+quant-evidence = "quantpaper.research.evidence_cli:main"
 quant-marketdata = "quantpaper.marketdata.cli:main"
 
 [tool.setuptools.packages.find]

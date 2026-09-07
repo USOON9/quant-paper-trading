@@ -79,6 +79,87 @@ class PublishSecretTests(unittest.TestCase):
         self.assertEqual(issue["line"], 2)
         self.assertNotIn(self.secret, json.dumps(result) + output.getvalue())
 
+    def test_exact_ci_workflow_is_scanned_in_candidates_and_index(self):
+        workflow = self.root / ".github/workflows/ci.yml"
+        workflow.parent.mkdir(parents=True)
+        safe = b"name: Offline tests\npermissions:\n  contents: read\n"
+        workflow.write_bytes(safe)
+        self.assertTrue(checker.allowed_path(".github/workflows/ci.yml"))
+        clean = checker.scan(self.root)
+        self.assertTrue(clean["ok"], clean)
+        self.assertEqual(clean["files_scanned"], 3)
+        with self.index([(".github/workflows/ci.yml", safe, "100644")]):
+            result = checker.scan(self.root, mode="staged")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["files_scanned"], 1)
+
+        unsafe = safe + ("# copied credential: " + self.secret + "\n").encode()
+        workflow.write_bytes(unsafe)
+        result = checker.scan(self.root)
+        self.assertIn("configured-credential-value", self.rules(result))
+        self.assertNotIn(self.secret, json.dumps(result))
+        workflow.write_bytes(safe)
+        with self.index([(".github/workflows/ci.yml", unsafe, "100644")]):
+            result = checker.scan(self.root, mode="staged")
+        self.assertIn("configured-credential-value", self.rules(result))
+        self.assertNotIn(self.secret, json.dumps(result))
+
+    def test_other_workflows_are_not_allowed_or_read(self):
+        workflow_dir = self.root / ".github/workflows"
+        workflow_dir.mkdir(parents=True)
+        for filename in ("publish.yaml", "ci.yaml", "release.yml"):
+            name = ".github/workflows/" + filename
+            with self.subTest(name=name):
+                self.assertFalse(checker.allowed_path(name))
+                path = self.root / name
+                path.write_text(self.secret)
+                result = checker.scan(self.root)
+                self.assertIn("outside-code-publication-allowlist", self.rules(result))
+                self.assertNotIn("configured-credential-value", self.rules(result))
+                path.unlink()
+                with self.index([(name, self.secret.encode(), "100644")]):
+                    result = checker.scan(self.root, mode="staged")
+                self.assertIn("outside-code-publication-allowlist", self.rules(result))
+                self.assertEqual(result["files_scanned"], 0)
+
+    def test_ci_workflow_and_both_ancestor_symlinks_fail_closed(self):
+        for linked_name in (".github", ".github/workflows", ".github/workflows/ci.yml"):
+            for dangling in (False, True):
+                with self.subTest(linked_name=linked_name, dangling=dangling), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory).resolve()
+                    (root / "README.md").write_text("safe docs\n")
+                    (root / ".env").write_text("API_SECRET=" + self.secret + "\n")
+                    target = root / "unpublished-target"
+                    linked = root / linked_name
+                    linked.parent.mkdir(parents=True, exist_ok=True)
+                    suffix = Path(".github/workflows/ci.yml").relative_to(linked_name)
+                    if not dangling:
+                        destination = target / suffix if str(suffix) != "." else target
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        destination.write_text(self.secret)
+                    linked.symlink_to(target, target_is_directory=linked_name != ".github/workflows/ci.yml")
+                    result = checker.scan(root)
+                    self.assertIn("symbolic-link-forbidden", self.rules(result))
+                    self.assertNotIn("configured-credential-value", self.rules(result))
+                    self.assertNotIn(self.secret, json.dumps(result))
+
+    def test_staged_ci_symlink_and_working_ancestor_symlink_are_rejected(self):
+        with self.index([(".github/workflows/ci.yml", b"external-workflow", "120000")]):
+            result = checker.scan(self.root, mode="staged")
+        self.assertIn("nonregular-or-conflicted-index-entry", self.rules(result))
+        (self.root / ".github").symlink_to(self.root / "missing-target", target_is_directory=True)
+        with self.index([(".github/workflows/ci.yml", b"name: Safe\n", "100644")]):
+            result = checker.scan(self.root, mode="staged")
+        self.assertIn("symbolic-link-forbidden", self.rules(result))
+        self.assertEqual(result["files_scanned"], 0)
+
+    def test_workflow_symlink_check_stops_before_external_leaf_metadata(self):
+        ancestor = self.root / ".github"
+        with patch.object(Path, "is_symlink", autospec=True,
+                          side_effect=lambda path: path == ancestor) as check:
+            self.assertTrue(checker._has_symlink(self.root, ".github/workflows/ci.yml"))
+        check.assert_called_once_with(ancestor)
+
     def test_synthetic_looking_configured_value_is_still_detected(self):
         value = "synthetic-" + "known-private-credential"
         (self.root / ".env").write_text("GITHUB_TOKEN=" + value)

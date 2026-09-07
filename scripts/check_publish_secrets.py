@@ -27,7 +27,7 @@ from dotenv import dotenv_values
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = frozenset({".gitignore", ".env.example", "README.md", "main.py",
-                        "pyproject.toml", "requirements-tested.txt"})
+                        "pyproject.toml", "requirements-tested.txt", ".github/workflows/ci.yml"})
 CODE_ROOTS = {"src/quantpaper": ".py", "tests": ".py", "scripts": ".py",
               "docs": ".md", "configs": ".toml"}
 SKIP_DIRECTORIES = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
@@ -72,19 +72,31 @@ def allowed_path(name: str) -> bool:
 
 
 def _has_symlink(root: Path, name: str) -> bool:
-    path = root / name
-    while path != root:
+    # Walk from the trusted root outward: checking the leaf first would itself
+    # traverse a symlinked ancestor while inspecting leaf metadata.
+    path = root
+    for part in PurePosixPath(name).parts:
+        path = path / part
         if path.is_symlink():
             return True
-        path = path.parent
     return False
 
 
 def candidate_paths(root: Path) -> tuple[list[str], list[Issue]]:
     """Walk only the publication roots; never inspect data/artifacts/.git."""
-    names = [name for name in ROOT_FILES if (root / name).exists() or (root / name).is_symlink()]
+    names = []
     issues = []
-    for prefix in CODE_ROOTS:
+    for name in ROOT_FILES:
+        # An exact allowlisted file may have nested ancestors (the CI workflow).
+        # Check those before exists/stat so even a dangling ancestor link fails
+        # closed without following it to inspect an external target.
+        if _has_symlink(root, name):
+            issues.append(Issue(name, 0, "symbolic-link-forbidden"))
+        elif (root / name).exists():
+            names.append(name)
+    # Inspect this one directory, but do not grant a general workflow/YAML
+    # allowance: any file other than the exact ROOT_FILES entry is rejected.
+    for prefix in (*CODE_ROOTS, ".github/workflows"):
         directory = root / prefix
         if _has_symlink(root, prefix):
             issues.append(Issue(prefix, 0, "symbolic-link-forbidden"))

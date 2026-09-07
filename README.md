@@ -4,6 +4,14 @@ An event-driven, multi-asset paper-trading research framework. Local synthetic s
 
 > Here, "high frequency" refers to millisecond events, short-horizon signals, and latency-sensitive research workflows—not exchange colocation, kernel bypass, or microsecond production HFT. Returns from synthetic demonstration data have no investment significance.
 
+## Structured research evidence and automated checks
+
+The [research evidence layer](docs/research-evidence.md) now packages existing warehouse identity, observed daily bars, filing facts, macro vintages, and news metadata into deterministic, timestamped research inputs. The default requires both availability and local ingestion strictly before the requested cutoff. Missing data, ambiguous identity, bounded coverage, and metadata-only news remain explicit; no current information is backfilled into historical evidence.
+
+`python main.py evidence build --help` describes the offline builder. Outputs are create-only under `artifacts/research-evidence/`, with record IDs, snapshot/packet hashes, a builder manifest, and a verified English report. This does not call an LLM, train or promote a model, load credentials, modify the warehouse, or submit orders. Existing trading gates and schedules remain unchanged.
+
+GitHub CI is configured for Python 3.11 and 3.14 with mocked/synthetic tests, code-only secret checks, and a launcher smoke test. See [publication security](docs/github-security.md) for its boundaries. A passing software test does not validate investment performance.
+
 ## Status after the 2026-09-05 review
 
 See the [review report](docs/quant-review-2026-09-05.md) for findings, fixes, evaluation conventions, and remaining work. The current model still fails admission: 12-fold out-of-sample AUC is 0.5137; at 5 bps round-trip cost, cumulative return is approximately 1.15%, Sharpe 0.066, and maximum drawdown approximately -26.01%. These are theoretical intraday research results across six assets, not realized trading returns. At 10 bps, return is approximately -32.05%. Corrected statistical conventions are not evidence of an improved or profitable model.

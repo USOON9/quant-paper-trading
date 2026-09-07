@@ -18,6 +18,11 @@ sys.path.insert(0, str(SOURCE_ROOT))
 os.chdir(PROJECT_ROOT)
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "evidence":
+        from quantpaper.research.evidence_cli import main as evidence_main
+
+        raise SystemExit(evidence_main(sys.argv[2:]))
+
     if len(sys.argv) > 1 and sys.argv[1] == "marketdata":
         from quantpaper.marketdata.cli import main as marketdata_main
 
