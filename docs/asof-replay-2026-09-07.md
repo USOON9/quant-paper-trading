@@ -1,22 +1,22 @@
-# 目标时刻报价重建与离线事件回放
+# As-of Quote Reconstruction and Offline Event Replay
 
-## 这一步做什么
+## Purpose of this stage
 
-把“目标时刻之后找到第一条报价”改成“只使用目标时刻之前的最新事件”。上一轮从目标时刻才开始采集，所以不能说明目标之前的状态。本轮沿用同一批标的、日期和 90 个目标时点，为每个时点保存前 5 秒、后 2 秒的完整短窗口，再按预先固定的规则重建报价状态。
+Replace “find the first quote after the target time” with “use only the latest event before the target time.” The previous collection started at the target itself, so it could not establish the preceding state. This stage retains the same symbols, dates, and 90 target times, saves a complete short window extending 5 seconds before and 2 seconds after each target, and reconstructs quote state under rules fixed in advance.
 
-这里的“之前”只基于供应商的历史事件时间。今天下载的历史数据没有当年的本地接收时间，也不能证明机器人当时确实收到了报价。本轮不是完整订单簿、真实网络延迟仿真或策略收益回测。
+“Before” refers only to the vendor's historical event timestamps. Historical data downloaded today do not contain the application's original local receive timestamps or prove that the bot actually received those quotes at the time. This is not a complete order book, a simulation of actual network latency, or a strategy-return backtest.
 
-## 本轮实际结果
+## Observed results
 
-2026-09-07 11:02:16–11:02:53 UTC 完成补采：90 个请求全部成功、分页完整，共保存 **34,555 条原始报价**。源研究仍为股票 2026-08-31 至 09-04、BTC 2026-09-02 至 09-06，没有根据结果改变采样时点。
+The supplementary capture completed during 2026-09-07 11:02:16–11:02:53 UTC: all 90 requests succeeded with complete pagination, saving **34,555 raw quotes**. The source study still covers stocks from 2026-08-31 through 09-04 and BTC from 2026-09-02 through 09-06. Sampling times were not changed in response to results.
 
-- 采集及首次分析：`artifacts/marketdata/20260907-asof-preroll/`。
-- 独立的完全离线复算：`artifacts/marketdata/20260907-asof-offline-check/`，HTTP 请求数为 0。
-- 两次全部 90 个窗口的逐项状态、参考价、拒绝原因及汇总结果完全一致；输入文件和运行中的源码快照未改变。
+- Capture and initial analysis: `artifacts/marketdata/20260907-asof-preroll/`.
+- Independent, entirely offline recalculation: `artifacts/marketdata/20260907-asof-offline-check/`, with 0 HTTP requests.
+- Every state, reference price, rejection reason, and aggregate result matched across all 90 windows in both runs. Input files and the source snapshots remained unchanged during execution.
 
-### 决策时点的报价状态
+### Quote state at the decision time
 
-| 标的 | 目标时点数 | 通过报价检查 | 缺少先前事件 | 先前报价过期 |
+| Symbol | Target times | Passed quote checks | No preceding event | Preceding quote stale |
 | --- | ---: | ---: | ---: | ---: |
 | SPY | 15 | 15 | 0 | 0 |
 | JPM | 15 | 13 | 0 | 2 |
@@ -24,76 +24,76 @@
 | WMT | 15 | 14 | 0 | 1 |
 | JNJ | 15 | 8 | 3 | 4 |
 | BTC/USD | 15 | 2 | 7 | 6 |
-| 合计 | 90 | 66 | 10 | 14 |
+| Total | 90 | 66 | 10 | 14 |
 
-这次所有来源元数据均可用，选定的决策时点没有落在无效状态，但窗口内部确实存在无效更新和时间戳歧义。不能因为某个决策恰好可用，就忽略整个事件流中的状态失效。
+All source metadata were usable in this run. None of the selected decision times fell in an invalid state, but invalid updates and timestamp ambiguities did occur within the windows. A usable state at a particular decision does not justify ignoring invalidation elsewhere in the event stream.
 
-三个偏移情景合计 270 次检查：193 次仅通过参考报价检查；72 次因原始决策已阻断而保持拒绝（24 个时点 × 3 个情景）；另外 5 次由“决策有效”变成“到达时刻无效或过期”。其中两次因同时间戳不同更新无法确定先后，三次因报价超过年龄上限。0、250、1,000 毫秒情景分别有 66、65、62 个通过报价检查的时点。
+The three offset scenarios produced 270 checks: 193 passed reference-quote checks only; 72 remained rejected because the original decision was already blocked (24 target times × 3 scenarios); another 5 changed from a valid decision state to an invalid or stale arrival state. Of those, two involved distinct updates with the same timestamp and no determinable ordering, and three exceeded the quote-age limit. The 0, 250, and 1,000 millisecond scenarios had 66, 65, and 62 target times passing quote checks, respectively.
 
-一个实际例子：XOM 在 9 月 1 日收盘附近，决策时刻的最新报价年龄约 896 毫秒，能通过检查；到 250 毫秒偏移时，最新时间戳对应两条不同、没有可用序号的更新，因此状态变为 `INVALID`。回放没有越过这次更新去沿用旧价格。JNJ 在 9 月 4 日开盘附近则是另一个情况：原报价年龄约 7.604 毫秒，到 1 秒偏移后变成 1,007.604 毫秒，按固定规则变为 `STALE`。
+One observed example: near the XOM close on September 1, the latest quote at the decision time was approximately 896 milliseconds old and passed the checks. At the 250 millisecond offset, the latest timestamp had two different updates without usable sequence numbers, so the state became `INVALID`. Replay did not skip that update and reuse an older price. JNJ near the open on September 4 illustrates a different case: the original quote was approximately 7.604 milliseconds old; after the 1 second offset, its age was 1,007.604 milliseconds, making it `STALE` under the fixed rule.
 
-BTC 的 2/15 不能解释成成交率，更不能推广为全球 BTC 流动性结论；它只描述这些时点、Alpaca US 数据源、5 秒前置窗口与 1 秒年龄规则下的结果。与上一轮“允许等待未来 30 秒的新报价”口径不同，也不是模型性能下降。
+BTC's 2/15 is not a fill rate and cannot support a conclusion about global BTC liquidity. It describes only these target times, the Alpaca US source, the 5 second warmup window, and the 1 second age rule. This differs from the previous method, which allowed waiting up to 30 seconds for a future quote, and does not indicate a decline in model performance.
 
-全项目 **293 项测试通过**（本轮新增 62 项），编译和依赖检查通过；已有 NumPy/pandas 时间运算弃用警告仍需后续兼容性处理。旧 v2/v3 模型证据、观察报告、数据库、此前采集完成清单及既有自动任务配置哈希均未改变。两层订单开关保持关闭，实际提交订单数与模拟成交记账数均为 0。
+The full project passed **293 tests** (62 added in this stage), along with compilation and dependency checks. Existing NumPy/pandas datetime-operation deprecation warnings still require future compatibility work. Hashes of the prior v2/v3 model evidence, shadow report, database, previous capture completion indexes, and existing automation configuration remained unchanged. Both order gates stayed closed; actual order submissions and simulated-fill ledger entries were both 0.
 
-## 固定规则与拒绝原因
+## Fixed rules and rejection reasons
 
-| 状态 | 含义 | 如何处理 |
+| State | Meaning | Handling |
 | --- | --- | --- |
-| `VALID` | 最新事件严格早于检查时刻，年龄不超过 1 秒，并通过报价过滤 | 仅允许记录买卖参考价格，不记成交 |
-| `MISSING` | 窗口内没有严格早于检查时刻的事件 | 不用未来报价补齐 |
-| `STALE` | 最新有效报价年龄超过 1 秒 | 不沿用陈旧价格 |
-| `INVALID` | 最新更新为零/负/非有限价格或数量、交叉/锁定报价、不允许的条件或时间戳歧义 | 状态失效，不回退使用更早的有效价格 |
-| `SOURCE_REJECTED` | 来源、范围、分页或时间等元数据不可靠 | 整个窗口不可用于参考价格 |
+| `VALID` | The latest event is strictly before the check time, no more than 1 second old, and passes quote filters | Record buy/sell reference prices only; do not record fills |
+| `MISSING` | No event in the window is strictly before the check time | Do not backfill with a future quote |
+| `STALE` | The latest valid quote is more than 1 second old | Do not reuse the stale price |
+| `INVALID` | The latest update contains zero/negative/nonfinite prices or sizes, a crossed/locked quote, disallowed conditions, or timestamp ambiguity | Invalidate state; do not fall back to an earlier valid price |
+| `SOURCE_REJECTED` | Source, range, pagination, timing, or other metadata are unreliable | Exclude the entire window from reference-price use |
 
-具体约束：
+Specific constraints:
 
-- 使用严格的 `quote.t < asof`。相等时间戳不能确定先后顺序，因此不作为该时刻已经知道的报价。
-- 最新事件具有决定权：报价清除、无效更新与同时间戳不同更新都能使状态失效；严格更晚的有效更新才能恢复它。完全相同的重复记录只去重，不制造歧义。
-- 报价年龄恰好 1,000 毫秒允许，超过即过期。这是固定的研究假设，不是经过校准的真实成交参数；不能为了提高可用比例临时放宽。
-- 股票只接受 `c=['R']` 和已知 tape A/B/C，另外拒绝 locked/crossed 与非正价格、数量。BTC 使用独立的 `crypto_us` 口径，不套用股票条件代码。
-- `R` 只属于这里的报价条件命名空间，不能把成交条件代码混进来。正常报价条件本身不能证明无停牌、自动可执行或可按显示数量成交；这些还需要其他市场状态信息。[Alpaca 字段定义](https://docs.alpaca.markets/us/docs/real-time-stock-pricing-data)、[UTP 2026 报价规范](https://www.utpplan.com/DOC/UtpBinaryOutputSpec.pdf)
-- API 可能包含结束边界的记录，内部统一按 `[start, end)` 过滤；不把 API 约定与内部分析约定混为一谈。
-- 请求未完成、超过 3 页、来源不符或无法解析事件时间，都不能静默当作完整、可排序的历史窗口。
+- Apply strict `quote.t < asof`. Equal timestamps do not establish ordering, so they cannot establish that a quote was already known at that time.
+- The latest event governs state. Quote clearing, invalid updates, and distinct updates sharing a timestamp can invalidate it; only a strictly later valid update can restore it. Exactly identical duplicates are deduplicated without creating ambiguity.
+- A quote age of exactly 1,000 milliseconds is allowed; anything older is stale. This is a fixed research assumption, not a calibrated execution parameter, and must not be relaxed after observing the availability rate.
+- Stocks accept only `c=['R']` and known tape A/B/C, and reject locked/crossed quotes and nonpositive prices or sizes. BTC uses the separate `crypto_us` convention without stock condition codes.
+- `R` refers only to the quote-condition namespace here; trade-condition codes must not be mixed into it. A regular quote condition alone does not establish the absence of a halt, automated executability, or a fill at the displayed size. Those require additional market-status information. [Alpaca field definitions](https://docs.alpaca.markets/us/docs/real-time-stock-pricing-data), [UTP 2026 quote specification](https://www.utpplan.com/DOC/UtpBinaryOutputSpec.pdf)
+- The API may return records at its end boundary. Internal analysis consistently filters to `[start, end)`; the API convention and the internal analysis convention are distinct.
+- Incomplete requests, more than 3 pages, mismatched sources, or unparseable event timestamps must not silently become complete, orderable historical windows.
 
-## 回放到达时刻，但不虚构成交
+## Replay arrival state without inventing fills
 
-在同一决策时刻，分别检查 0、250、1,000 毫秒事件时间偏移后的状态。只有决策时刻与偏移后的状态都有效，才输出 `QUOTE_ELIGIBLE_NO_FILL_ASSUMED`，并记录 ask 买入参考价、bid 卖出参考价。
+For the same decision time, inspect state after event-time offsets of 0, 250, and 1,000 milliseconds. Only when both the decision and offset states are valid does the result become `QUOTE_ELIGIBLE_NO_FILL_ASSUMED`, with the ask recorded as a buy reference price and the bid as a sell reference price.
 
-决策时刻被阻断，就算未来报价恢复，也仍然是 `DECISION_BLOCKED`；不能事后补出一个本来不该发生的交易。决策有效而到达时刻失效，则是 `ARRIVAL_BLOCKED`。各情景不是独立订单，报告计数也不是成交率。
+A blocked decision remains `DECISION_BLOCKED` even if a future quote restores valid state. Replay must not retrospectively create a trade that should never have occurred. A valid decision followed by an unusable arrival state is `ARRIVAL_BLOCKED`. These scenarios are not independent orders, and the report counts are not fill rates.
 
-本轮没有订单数量、账户余额变化、头寸、手续费或 PnL 计算。即使 Alpaca 自己的 Paper 成交，也存在市场冲击、排队与延迟等未建模部分，因此不能把参考报价直接当作实盘成交。[Alpaca Paper 模拟限制](https://docs.alpaca.markets/us/docs/paper-trading)
+This stage calculates no order quantities, account-balance changes, positions, fees, or PnL. Even Alpaca's own Paper fills omit aspects of market impact, queueing, and latency, so reference quotes cannot be treated as actual trading fills. [Alpaca Paper simulation limitations](https://docs.alpaca.markets/us/docs/paper-trading)
 
-## 新增代码 section
+## New code sections
 
-| 模块 | 职责 |
+| Module | Responsibility |
 | --- | --- |
-| `replay_protocol.py` | 从已校验的五日研究计划重建相同标的、日期和时点，冻结短窗口、时序、年龄与条件规则，禁止按结果重新选样。 |
-| `replay_book.py` | 按事件时间更新报价状态，处理失效、恢复、过期和缺失；重建决策与偏移时刻；没有网络、账户或订单接口。 |
-| `replay_runner.py` | 校验输入计划/源码/原始数据哈希，单次只读补采，或完全离线复算；保存全新输出目录与审计清单，不覆盖旧证据。 |
-| `marketdata/cli.py` | 新增 `replay-capture` 和 `replay` 命令，继续用 `show` 离线查看；不会转到交易通道。 |
+| `replay_protocol.py` | Reconstruct the same symbols, dates, and targets from the verified five-day study plan; freeze short windows, ordering, age, and condition rules; prohibit outcome-dependent resampling. |
+| `replay_book.py` | Update quote state in event-time order, handling invalidation, recovery, staleness, and missing data; reconstruct decision and offset states; expose no network, account, or order interface. |
+| `replay_runner.py` | Verify input-plan, source-code, and raw-data hashes; perform a one-off read-only supplementary capture or entirely offline recalculation; save a fresh output directory and audit index without overwriting earlier evidence. |
+| `marketdata/cli.py` | Add `replay-capture` and `replay` commands while retaining offline `show`; never route to trading execution. |
 
-## 使用方式
+## Usage
 
-在项目目录使用现有 `.venv`。所有输出目录必须全新：
+Use the existing `.venv` from the project directory. Every output directory must be new:
 
 ```bash
-# 向行情接口补采同一批目标的短窗口，并分析；不是下单。
+# Fetch short quote windows for the same targets and analyze them; do not submit orders.
 .venv/bin/python main.py marketdata replay-capture --source-dir artifacts/marketdata/20260907-five-session-study --run-dir artifacts/marketdata/NEW-ASOF-CAPTURE
 
-# 读取前一步冻结原始数据，完全离线复算，不调用 API。
+# Recalculate from the previous step's frozen raw data entirely offline, without API calls.
 .venv/bin/python main.py marketdata replay --source-dir artifacts/marketdata/NEW-ASOF-CAPTURE --run-dir artifacts/marketdata/NEW-OFFLINE-REPLAY
 
-# 校验并查看结果。
+# Verify and display the results.
 .venv/bin/python main.py marketdata show --run-dir artifacts/marketdata/20260907-asof-offline-check
 ```
 
-新采集客户端仍只向固定行情主机发 GET 请求，每页请求间隔至少 0.4 秒；不自动重试或切换数据源。请求失败会停止剩余请求，保留未采集窗口及样本分母。离线回放不构造行情客户端，也不需要调用账户 API。
+The capture client still sends only GET requests to the fixed market-data host, with at least 0.4 seconds between page requests. It does not automatically retry or switch sources. A request failure stops subsequent requests while retaining uncollected windows and the sample denominator. Offline replay does not construct a market-data client or require account API calls.
 
-哈希可检测文件与索引不一致，但不是外部签名；整套文件及清单同时被恶意替换不在当前保证范围。源码快照不等于完整可执行环境镜像。
+Hashes detect mismatches between files and their index, but are not external signatures. Malicious replacement of the entire file set and index together is outside the current guarantee. A source snapshot is not a complete executable environment image.
 
-## 仍未解决的交易问题
+## Unresolved trading requirements
 
-还没有历史接收时间、可靠的停牌/恢复流、完整报价条件矩阵、订单簿排队、实盘可交易数量、实际费用、成交回报和持仓对账。本轮报价通过研究过滤，不等于这些条件已经满足。没有更新 ML 模型，没有新增自动任务，也没有打开任何交易开关。
+Historical receive timestamps, reliable halt/resumption streams, a complete quote-condition matrix, order-book queueing, actual tradable size, real fees, execution reports, and position reconciliation remain unavailable. Passing this stage's research quote filters does not establish that these requirements are satisfied. No ML model was updated, no automation was added, and no trading gate was opened.
 
-下一阶段应把“行情状态检查”接入模拟订单意图的准入检查与生命周期日志，在无报价、过期、状态未知、模型未批准等情况下输出明确拒绝原因。实际成交仍需要独立的撮合假设与账户对账，不能把本轮参考价格直接转成盈利记录。
+The next stage should connect market-state checks to simulated order-intent admission checks and lifecycle logs, with explicit rejection reasons for missing quotes, stale data, unknown state, or an unapproved model. Actual fills still require independent matching assumptions and account reconciliation. This stage's reference prices must not be converted directly into profit records.

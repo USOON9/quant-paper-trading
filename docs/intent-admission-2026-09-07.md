@@ -1,65 +1,65 @@
-# 离线合成订单意图：准入与审计
+# Offline Synthetic Order Intents: Admission and Audit
 
-## 本轮解决什么
+## Scope of This Stage
 
-把上一阶段的目标时刻报价重建接到独立的订单意图准入层，检查“是否有足够证据继续做离线模拟”。这不是产生真实模型信号，也不是订单执行器；没有调用 Alpaca 账户、持仓或订单接口。
+This stage connects the previous stage's quote-state reconstruction at target times to an independent order-intent admission layer, checking whether sufficient evidence exists to proceed with offline simulation. It does not generate actual model signals and is not an order executor; no Alpaca account, position, or order endpoints were called.
 
-每个已冻结目标时点生成 BUY/SELL 两种合成意图，分别检查 0、250、1000 毫秒的事件时间偏移。每个意图固定为 5 美元；这只是测试输入，不是建议仓位。单意图金额硬上限 25 美元，报价年龄硬上限 1000 毫秒，均为研究安全约束而非经过校准的交易参数。
+Each frozen target time generates synthetic BUY/SELL intents, evaluated at event-time offsets of 0, 250, and 1000 milliseconds. Every intent has a fixed notional of 5 dollars; this is a test input, not a recommended position size. The hard limits of 25 dollars per intent and 1000 milliseconds of quote age are research safety constraints, not calibrated trading parameters.
 
-## 新增 section 的职责
+## Responsibilities of the New Sections
 
-| 文件 | 职责 |
+| File | Responsibility |
 | --- | --- |
-| `src/quantpaper/admission.py` | 无外部副作用的准入函数。验证意图、金额、来源、模型状态、决策报价与到达报价；累计拒绝原因，不因模型不合格而跳过行情检查。 |
-| `src/quantpaper/admission_runner.py` | 离线运行器。校验历史证据索引和冻结研究协议，重新分析原始报价并逐项比对；核对模型文件哈希，但不加载或执行 joblib；只写新的审计目录。 |
-| `src/quantpaper/marketdata/cli.py` | 增加 `admission` 命令，并用已有 `show` 命令查看报告；必须显式提供历史证据目录。 |
-| `tests/test_admission*.py` | 覆盖金额边界、时间因果、来源异常、模型状态、审计哈希链、输入篡改、隔离和命令行分派。 |
-| `scripts/check_publish_secrets.py` | GitHub 发布前检查允许的代码路径、候选文件和整个 Git 暂存区；在内存中比对本地凭据，报告不输出密钥。 |
-| `.gitignore` | 忽略凭据文件、数据、模型、审计产物、虚拟环境和缓存；这里只写文件模式，不能写 API key 本身。 |
+| `src/quantpaper/admission.py` | Admission functions without external side effects. Validate intents, notionals, provenance, model status, decision quotes, and arrival quotes; accumulate rejection reasons rather than skipping market-data checks when the model fails. |
+| `src/quantpaper/admission_runner.py` | Offline runner. Verify the historical evidence index and frozen research protocol, reanalyze raw quotes, and compare each result; verify model-file hashes without loading or executing joblib; write only to a new audit directory. |
+| `src/quantpaper/marketdata/cli.py` | Add the `admission` command and use the existing `show` command to view reports; the historical evidence directory must be supplied explicitly. |
+| `tests/test_admission*.py` | Cover notional boundaries, temporal causality, source anomalies, model status, audit hash chains, input tampering, isolation, and command-line dispatch. |
+| `scripts/check_publish_secrets.py` | Before GitHub publication, check allowed code paths, candidate files, and the entire Git index; compare local credentials in memory without exposing keys in reports. |
+| `.gitignore` | Ignore credential files, data, models, audit artifacts, virtual environments, and caches; include filename patterns only, never the API key itself. |
 
-## 生命周期与证据
+## Lifecycle and Evidence
 
-每个意图只有三个逻辑事件：`INTENT_CREATED` → `CHECKS_COMPLETED` → `REJECTED` 或 `APPROVED_FOR_SIMULATION_ONLY`。后一状态仍不允许提交订单，不意味着可以开始 Paper 或真钱交易。
+Each intent has only three logical events: `INTENT_CREATED` → `CHECKS_COMPLETED` → `REJECTED` or `APPROVED_FOR_SIMULATION_ONLY`. The latter state still does not permit order submission or authorize Paper or real-money trading.
 
-意图 ID 绑定来源 completion 哈希、标的、方向、金额、决策时点和时间偏移。`events.json` 将所有逻辑事件串成连续编号和 SHA-256 哈希链。日志记录本次运行的观察时间，不把现在读取的历史行情伪装成当时收到的消息。这是本地可检查的审计证据，不是数字签名或券商成交回报。
+Intent IDs bind the source completion hash, instrument, side, notional, decision time, and time offset. `events.json` links all logical events through consecutive sequence numbers and a SHA-256 hash chain. The log records the observation time of this run rather than presenting historical data read now as messages received at the historical time. This is locally verifiable audit evidence, not a digital signature or a broker execution report.
 
-输出目录包含计划、源码快照、模型状态与哈希、逐意图结果、重新验证的报价状态、事件链、汇总报告和完成索引。已有模型、行情证据和数据库保持原样。输出不上传 GitHub。
+The output directory contains the plan, source snapshot, model status and hashes, per-intent results, revalidated quote states, event chain, summary report, and completion index. Existing models, market-data evidence, and databases remain unchanged. The outputs are not uploaded to GitHub.
 
-## 模型状态的正确含义
+## What the Model Status Means
 
-读取当前冻结 v2 的 `evaluation.approved_for_paper_signals`，只表示**现在的模型准入状态**。不能把它当成历史目标时点已经存在的批准、训练结果或预测。本轮不重新训练、不替换 v2/v3、不生成模型交易信号、不计算策略盈亏。
+Reading `evaluation.approved_for_paper_signals` from the currently frozen v2 model indicates only **the model's current admission status**. It must not be treated as approval, training results, or predictions that already existed at historical target times. This stage does not retrain, replace v2/v3, generate model trading signals, or calculate strategy PnL.
 
-即使未来所有准入检查通过，仍缺少真实接收时间、交易暂停状态、账户/库存/保证金、费用、排队、冲击、订单恢复及券商对账等执行层证据。不能将报价通过率或合成意图结果当成成交率或收益。
+Even if all admission checks pass in the future, execution-layer evidence would still be missing for actual receive times, trading-halt status, accounts/inventory/margin, fees, queues, impact, order recovery, and broker reconciliation. Quote acceptance rates and synthetic-intent results must not be interpreted as fill rates or returns.
 
-## 本次实际结果
+## Actual Results of This Run
 
-2026-09-07 对 `20260907-asof-offline-check` 完整证据执行一次离线检查：90 个窗口、540 个唯一意图、1,620 个逻辑审计事件；所有意图均为 `REJECTED`，均含 `MODEL_NOT_APPROVED`。没有网络请求、下单、模拟成交或模型更新。模型、数据库、既有证据和自动任务哈希保持不变。
+On 2026-09-07, one offline check was performed against the complete `20260907-asof-offline-check` evidence: 90 windows, 540 unique intents, and 1,620 logical audit events. Every intent was `REJECTED` and included `MODEL_NOT_APPROVED`. There were no network requests, order submissions, simulated fills, or model updates. Hashes of models, databases, existing evidence, and automated tasks remained unchanged.
 
-其中 386 个意图只因模型未批准被拒绝，154 个还存在至少一项报价问题。以下是按意图计数的拒绝原因，同一意图可以包含多个原因，不能直接相加作为拒绝总数：
+Of these intents, 386 were rejected solely because the model was not approved; 154 also had at least one quote issue. The following rejection reasons are counted by intent. An intent may have multiple reasons, so these counts must not be summed to obtain the total number of rejections:
 
-| 原因 | 意图数 |
+| Reason | Intent count |
 | --- | ---: |
-| 模型未通过准入 | 540 |
-| 决策报价缺失 | 60 |
-| 决策报价过期 | 84 |
-| 到达报价缺失 | 44 |
-| 到达报价过期 | 56 |
-| 到达报价无效或有歧义 | 4 |
+| Model not approved for admission | 540 |
+| Missing decision quote | 60 |
+| Stale decision quote | 84 |
+| Missing arrival quote | 44 |
+| Stale arrival quote | 56 |
+| Invalid or ambiguous arrival quote | 4 |
 
-全项目 359 项测试通过，`pip check` 通过。当前 NumPy/pandas 组合仍产生既有的时间增量弃用警告；本轮没有升级运行环境。独立审查补上了跨状态事件时间不得倒退、同一事件内容不得改变的防御检查。
+All 359 project tests passed, as did `pip check`. The current NumPy/pandas combination still emits the existing timedelta deprecation warnings; the runtime environment was not upgraded in this stage. Independent review added defensive checks preventing event-time regression between states and changes to the content of the same event.
 
-## 运行方法
+## How to Run
 
-需要本地已有、完整且哈希一致的 as-of 回放证据和冻结 v2 模型。GitHub 仅包含源码，不包含这些本地数据或模型。
+Complete, hash-consistent as-of replay evidence and the frozen v2 model must already exist locally. GitHub contains source code only, not these local datasets or models.
 
 ```sh
-# 查看本次结果，无网络或下单：
+# View this run's results without network access or order submission:
 .venv/bin/python main.py marketdata show --run-dir artifacts/marketdata/20260907-intent-admission
 
-# 再次运行必须使用新的输出目录：
+# Use a new output directory for every subsequent run:
 .venv/bin/python main.py marketdata admission --source-dir artifacts/marketdata/20260907-asof-offline-check --run-dir artifacts/marketdata/NEW-INTENT-AUDIT
 ```
 
-两层 Paper 订单开关必须保持 `NO`。若输入或源码在运行中改变，运行器不会写入完成索引。
+Both Paper order gates must remain `NO`. If inputs or source code change during a run, the runner will not write a completion index.
 
-GitHub 发布规则和检查方法见 [github-security.md](github-security.md)。
+See [github-security.md](github-security.md) for GitHub publication rules and checks.

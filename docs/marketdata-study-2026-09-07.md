@@ -1,21 +1,21 @@
-# 多日、多时段行情验收：2026-09-07
+# Multi-Day, Multi-Window Market-Data Validation: 2026-09-07
 
-## 这一阶段解决什么
+## Purpose of This Stage
 
-上一轮只有每个标的一天、两个时点的报价，不能据此估计长期执行成本。这次把采样协议预先固定，扩展到每个标的五个完整交易日、每日三个报价窗口。目标是检查数据缺口、价差的日间/时段差异和报价选择时间敏感性，不是训练新模型或生成策略收益。
+The previous round had quotes from only one day and two instants per symbol, which cannot establish long-run execution costs. This study fixes the sampling protocol in advance and expands coverage to five complete sessions per symbol, with three quote windows per day. Its purpose is to inspect data gaps, day-to-day and intraday spread differences, and sensitivity to quote-selection time, not to train a new model or generate strategy returns.
 
-## 本轮实际结果
+## Actual Results
 
-已于 2026-09-07 10:38:52–10:39:48 UTC 完成单次采集，结果保存在 `artifacts/marketdata/20260907-five-session-study/`。
+A single collection run completed on 2026-09-07 at 10:38:52–10:39:48 UTC. Results are saved in `artifacts/marketdata/20260907-five-session-study/`.
 
-- 股票日期为 2026-08-31 至 2026-09-04；BTC 为 2026-09-02 至 2026-09-06。每个标的 5 天，共 30 个标的日、90 个报价窗口。
-- 120 个请求分段全部成功，共 128 次 HTTP 请求/返回页；无错误、无被停止的请求、无分页截断。历史访问成功仍不证明实时权限。
-- 保存 206,663 条原始报价与 16,603 根原始分钟 bar。分析得到 16,577 根时段内有效 bar；另有 26 根结束边界 bar 保留原始记录但不计入本时段。
-- 30 个标的日的来源元数据全部通过验证。90 个报价窗口中，88 个有规则内可选报价，89 个有可用的完整窗口分布；89 条无效报价被排除出统计，原始记录保留。
+- Stock dates span 2026-08-31 through 2026-09-04; BTC dates span 2026-09-02 through 2026-09-06. There are 5 days per symbol, totaling 30 symbol-days and 90 quote windows.
+- All 120 request segments succeeded, requiring 128 HTTP requests/response pages in total. There were no errors, stopped requests, or pagination truncations. Successful historical access still does not establish real-time entitlement.
+- Saved data comprises 206,663 raw quotes and 16,603 raw minute bars. Analysis found 16,577 valid in-session bars; another 26 session-end boundary bars remain in the raw records but are excluded from their sessions.
+- Source metadata passed validation for all 30 symbol-days. Of the 90 quote windows, 88 had a quote eligible under the selection rule, and 89 had a usable complete-window distribution. Statistics exclude 89 invalid quotes while retaining the raw records.
 
-### 按标的观察到的覆盖与价差
+### Observed Coverage and Spreads by Symbol
 
-| 标的 | 有效 / 应有分钟 | 缺失分钟 | 零成交量 bar | 每日开收盘报价对往返价差近似的中位数，bps |
+| Symbol | Valid / Expected minutes | Missing minutes | Zero-volume bars | Median daily approximate round-trip spread of opening/closing quote pairs, bps |
 | --- | ---: | ---: | ---: | ---: |
 | SPY | 1,950 / 1,950 | 0 | 0 | 0.261 |
 | JPM | 1,950 / 1,950 | 0 | 0 | 8.860 |
@@ -24,68 +24,68 @@
 | JNJ | 1,946 / 1,950 | 4 | 0 | 9.766 |
 | BTC/USD | 6,831 / 7,200 | 369 | 4,248 | 3.429 |
 
-表中价差每个标的均有 5 个每日配对样本，按“入场半价差 + 出场半价差”逐日计算，再取跨日中位数。1 bps = 0.01%。没有手续费、滑点或成交保证，不能把这些数字当作总成本，也不能据此改变冻结 v3 实验的成本配置——本轮诊断入场时点与 v3 日线标签不同。
+Each symbol has 5 daily paired samples in the spread column. The entry half-spread plus exit half-spread is calculated for each day, then the median is taken across days. 1 bps = 0.01%. These figures exclude fees and slippage and provide no execution guarantee. They are not total costs and must not be used to change the frozen v3 experiment's cost configuration: the diagnostic entry times differ from v3 daily labels.
 
-时段差异也很明显。例如 JNJ 的“每日窗口事件加权全价差中位数，再跨日取中位数”为开盘附近 13.545 bps、午间 4.009 bps、收盘附近 2.542 bps；JPM 分别为 10.081、2.527、1.973 bps。这支持继续分标的、分时段建模，不支持以一个统一低价差数字覆盖所有交易。
+Intraday differences are also substantial. For example, taking each day's event-weighted median full spread within a window, then the median of those daily values, gives JNJ spreads of 13.545 bps near the open, 4.009 bps at midday, and 2.542 bps near the close. The corresponding JPM values are 10.081, 2.527, and 1.973 bps. This supports continued symbol-specific and time-window-specific modeling, not applying one uniformly low spread assumption to every trade.
 
-### 暂时不能忽略的问题
+### Issues That Must Not Be Ignored
 
-BTC 的分钟覆盖率为 94.875%，而不是完整历史成交带。9 月 5 日与 6 日分别缺失 210、121 根分钟 bar。9 月 5 日午间窗口虽有 12 条原始报价，但没有目标后 30 秒内的有效报价；9 月 6 日该窗口返回零条。两天都保留在分母中，不把“无报价”当作“零价差”。其余 BTC 午间 3 天可选，因此该时段选价样本数是 3/5，不是 5/5。
+BTC minute coverage is 94.875%, not a complete historical trade tape. September 5 and 6 are missing 210 and 121 minute bars, respectively. The September 5 midday window contains 12 raw quotes but no valid quote within 30 seconds after the target; the same window on September 6 returned zero quotes. Both days remain in the denominator: no quote is not treated as zero spread. The other 3 BTC midday windows have selectable quotes, so the selected-quote sample count for that window is 3/5, not 5/5.
 
-4,248 根 BTC 零成交量 bar 不能作为成交证据。Alpaca 说明其加密 bar 可以包含报价中间价，无成交时成交量为零、价格来自报价；该数据源的 bar 与纯成交聚合不是同一口径。[官方加密 bar 说明](https://docs.alpaca.markets/us/docs/real-time-crypto-pricing-data)
+The 4,248 zero-volume BTC bars are not evidence of executed trades. Alpaca states that its cryptocurrency bars may incorporate quote midpoints; when no trades occur, volume is zero and prices come from quotes. Bars from this source therefore do not have the same definition as pure trade aggregates. [Official cryptocurrency bar definitions](https://docs.alpaca.markets/us/docs/real-time-crypto-pricing-data)
 
-时间敏感性不能忽略，但本轮没有把它包装成成交模拟。例如 WMT 在 9 月 3 日收盘附近的零延后与 1 秒偏移场景，选中报价的实际事件间隔约 991 毫秒，bid 下降约 18.401 bps；这是该窗口的一次历史价格变动，不是预期滑点、损失或可交易信号。相反，BTC 部分场景选中同一条较晚更新，价格变化为零，也不能解释为延迟没有风险。完整报告保留等待时间和实际报价事件间隔供核对。
+Timing sensitivity matters, but this run does not present it as a fill simulation. For example, near the WMT close on September 3, the selected quotes in the zero-delay and 1-second-shift scenarios are approximately 991 milliseconds apart in actual event time, with the bid falling approximately 18.401 bps. This is one historical price change in that window, not expected slippage, a loss, or a tradable signal. Conversely, some BTC scenarios select the same later update and show zero price change; that does not mean latency is risk-free. The full report retains waiting times and actual quote-event gaps for verification.
 
-全项目 **231 项测试通过**（本轮新增 56 项），编译检查与依赖检查通过。仍存在 NumPy/pandas 时间运算弃用警告，未在本轮升级依赖。采集前后原 v2/v3 模型证据、观察报告、研究数据库、上一轮采集完成清单和既有自动任务配置哈希一致；两层订单开关仍关闭。采集期间 13 个源文件的快照未改变。
+The full project passed **231 tests** (56 added in this round), along with compilation and dependency checks. NumPy/pandas time-arithmetic deprecation warnings remain; dependencies were not upgraded in this round. Hashes of the existing v2/v3 model evidence, observation report, research database, previous capture's completion manifest, and existing automation configuration matched before and after collection; both order gates remained closed. Snapshots of 13 source files were unchanged during collection.
 
-## 固定协议
+## Frozen Protocol
 
-- 股票范围保持 SPY、JPM、XOM、WMT、JNJ；使用 SIP 历史数据。按 XNYS 日历选择最近五个已结束且经过 30 分钟缓冲的交易日。
-- BTC/USD 单独按最近五个完整 UTC 日采样，使用 Alpaca US 场所数据；不与股票混合统计。
-- 每个标的每天采集完整时段的一分钟 bar，及 opening、midday、closing 三个各 60 秒的报价窗口。股票对应开盘后 5 分钟、交易时段中点、收盘前 5 分钟；BTC 对应 00:35、12:00、23:55 UTC。
-- 默认 30 个标的日、120 个请求分段，每个分段最多 3 页。日期范围不是随机样本，也不保证覆盖不同市场环境。
-- 计划与源代码快照在第一笔行情请求之前保存。原始数据、分析报告和 SHA-256 清单写入全新目录，不覆盖此前采集、模型或数据库。
+- The stock universe remains SPY, JPM, XOM, WMT, and JNJ, using historical SIP data. The XNYS calendar selects the latest five completed sessions after a 30-minute buffer.
+- BTC/USD is sampled separately over the latest five complete UTC days using Alpaca US venue data; its statistics are not pooled with stocks.
+- Each symbol-day includes full-session one-minute bars and three 60-second quote windows: opening, midday, and closing. Stock targets are 5 minutes after the open, the session midpoint, and 5 minutes before the close; BTC targets are 00:35, 12:00, and 23:55 UTC.
+- Defaults are 30 symbol-days and 120 request segments, with a maximum of 3 pages per segment. The date range is not a random sample and does not guarantee coverage of different market regimes.
+- The plan and source-code snapshot are saved before the first market-data request. Raw data, the analysis report, and the SHA-256 manifest are written to a new directory without overwriting previous captures, models, or databases.
 
-客户端将每次 HTTP 请求（包括分页）间隔限制为至少 0.4 秒。限速只覆盖当前客户端，不保证其他程序没有使用同一账户额度；HTTP 错误会触发停止后续请求，不自动重试或切换数据源。Alpaca 当前官方说明区分历史请求额度与实时数据覆盖权限，历史 SIP 请求成功不等于实时 SIP 权限已验收。[官方数据权限与限额](https://docs.alpaca.markets/us/docs/about-market-data-api)
+The client enforces at least 0.4 seconds between HTTP requests, including pagination. This rate limit applies only to the current client and does not ensure that other programs are not consuming the same account allowance. An HTTP error stops subsequent requests, with no automatic retry or source switching. Alpaca's current official documentation distinguishes historical request allowances from real-time data coverage; a successful historical SIP request does not validate real-time SIP entitlement. [Official data permissions and limits](https://docs.alpaca.markets/us/docs/about-market-data-api)
 
-## 如何理解统计
+## Interpreting the Statistics
 
-每个标的、每个时段分别统计，每一天权重相同。窗口内先计算报价事件加权价差中位数，再汇总这些每日中位数；不把五天的所有报价直接混在一起，也不把六个标的混成一个成本数字。
+Statistics are computed separately for each symbol and window, with equal weight for each day. An event-weighted median spread is first calculated within each window, then those daily medians are summarized. Quotes from all five days are not pooled directly, and the six symbols are not combined into one cost estimate.
 
-“选定报价”指目标时点起最多 30 秒内第一条有效且时间戳不存在排序歧义的更新。它不是目标时点正在生效的盘口快照，也不保证能成交。报价不完整、来源不一致、无有效报价、同时间戳冲突和被停止的请求都会保留在样本分母中，并单独报告不可用原因。
+A selected quote is the first valid update within at most 30 seconds after the target whose timestamp has no sequencing ambiguity. It is not a snapshot of the quote in effect at the target and does not guarantee execution. Incomplete quotes, inconsistent sources, no valid quotes, same-timestamp conflicts, and stopped requests all remain in the sample denominator, with unavailability reasons reported separately.
 
-延后 250 毫秒、1 秒的场景只改变历史事件时间上的选价起点。后续仍可能等待最多 30 秒才出现有效更新，因此不能把它当作测得的网络延迟、精确时点 BBO 或订单执行回放。比较价格变化只使用同一天、同一窗口内同时存在零延后与延后报价的配对，报告样本数，不用不同样本组的差值代替配对变化。
+The 250-millisecond and 1-second delay scenarios shift only the selection starting point in historical event time. A valid update may still take up to another 30 seconds to appear, so these scenarios are not measured network latency, exact-time BBO snapshots, or order-execution replay. Price-change comparisons use only paired zero-delay and delayed quotes available within the same day and window, and report sample counts. Differences between separate sample groups are not substituted for paired changes.
 
-没有计算账户手续费、净收益、成交概率、容量或策略胜率。报价条件、交易状态、订单簿更新与失效、真实接收时间、订单确认、排队、冲击和部分成交仍需要独立验证。
+No account fees, net returns, fill probabilities, capacity, or strategy win rates are calculated. Quote conditions, trading status, order-book updates and invalidation, actual receipt timestamps, order acknowledgments, queueing, market impact, and partial fills still require independent verification.
 
-## 新增代码 section
+## New Code Sections
 
-| Section | 做什么 |
+| Section | Purpose |
 | --- | --- |
-| `study_protocol.py` | 确定已完成交易日、三个窗口、标的、数据源和请求预算；处理假期、夏令时和提前收盘。 |
-| `study.py` | 检查订单开关关闭；冻结计划与代码；只读采集；遇错停止；保存完整样本分母、原始数据和报告。 |
-| `study_analytics.py` | 分日检查数据与报价，计算价差和事件时间敏感性，按标的/时段等权汇总；不连接订单或模型。 |
-| `client.py` 的限速扩展 | 每一页 GET 请求按单调时钟限速并记录尝试次数；保持原有固定主机、禁重定向、零自动重试限制。 |
+| `study_protocol.py` | Determines completed sessions, the three windows, symbols, sources, and request budget; handles holidays, daylight saving time, and early closes. |
+| `study.py` | Checks that order gates are closed; freezes the plan and code; collects data read-only; stops on errors; saves the full sample denominator, raw data, and report. |
+| `study_analytics.py` | Checks data and quotes by day, calculates spreads and event-time sensitivity, and aggregates with equal daily weight by symbol/window; has no order or model connection. |
+| Rate-limit extension in `client.py` | Uses a monotonic clock to rate-limit each GET page request and records attempt counts; retains the fixed host, redirect prohibition, and zero automatic retries. |
 
-## 使用方式
+## Usage
 
-在项目目录使用现有 Python 环境：
+Use the existing Python environment from the project directory:
 
 ```bash
-# 单次、只读采集；目录名称必须全新。
+# One-time, read-only collection; the directory name must be new.
 .venv/bin/python main.py marketdata study --sessions 5 --stock-feed sip --run-dir artifacts/marketdata/NEW-STUDY-NAME
 
-# 离线校验并查看本轮实际结果，不重新采集。
+# Verify and view this run's actual results offline, without collecting again.
 .venv/bin/python main.py marketdata show --run-dir artifacts/marketdata/20260907-five-session-study
 
-# 离线回归测试。
+# Offline regression tests.
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-程序限制每个资产最多 10 个已完成交易日。`captured` 仅表示请求和分页完成；质量、元数据、覆盖率必须另行查看。已有目录不能重跑覆盖；采集中途退出留下的部分文件不应当作已完成证据。
+The program limits each asset to at most 10 completed sessions. `captured` means only that requests and pagination completed; quality, metadata, and coverage require separate inspection. Existing directories cannot be overwritten by rerunning a capture. Partial files left by an interrupted collection must not be treated as completed evidence.
 
-这仍是单次研究采样，没有新增定时任务、启动持续行情流或授权自动交易。
+This remains a one-time research sample. It did not add a scheduled task, start a continuous market-data stream, or authorize automated trading.
 
-## 下一阶段边界
+## Boundaries for the Next Stage
 
-下一步先补“目标时刻有效的报价”重建与过期/不可用规则，区分最后一条已知报价和目标后的第一条更新；再做不保证成交的事件回放，显式记录无报价、过期报价、拒绝模拟成交等情况。实际账户费用、交易条件与持仓对账没有验收前，不宣称得到真实净收益，不开启自动交易。
+Next, reconstruct the quote in effect at the target and define stale/unavailable-state rules, distinguishing the last known quote from the first update after the target. Then implement event replay without guaranteed fills, explicitly recording missing quotes, stale quotes, and refused simulated fills. Until actual account fees, trading conditions, and position reconciliation have been validated, do not claim actual net returns or enable automated trading.

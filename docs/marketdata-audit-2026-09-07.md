@@ -1,27 +1,27 @@
-# 2026-09-07：分钟行情、报价与成本口径验收
+# 2026-09-07: Minute Data, Quotes, and Cost-Definition Validation
 
-## 本轮结论
+## Outcome
 
-已接通 Alpaca 的只读历史行情接口，并实际保存第一批股票 SIP 与 Alpaca US 加密货币数据：29,616 条原始报价、3,272 条原始分钟 bar，其中 3,267 条属于指定交易时段且通过 bar 检查。18 个数据请求分段全部成功，分页全部完成；这不等于所有分钟都有数据，更不等于模型通过交易准入。
+The read-only Alpaca historical market-data interface is connected, and the first batch of stock SIP and Alpaca US cryptocurrency data has been saved: 29,616 raw quotes and 3,272 raw minute bars, of which 3,267 fall within the specified sessions and pass the bar checks. All 18 request segments succeeded and completed pagination. This does not mean that every minute has data or that the model has passed trading admission checks.
 
-本轮没有下单、查询账户或持仓、更新模型，也没有启动持续行情采集。两层订单开关保持关闭。旧 v2 模型及观察报告、v3 冻结实验文件、研究数据库和原有自动任务配置的 SHA-256 与采集前一致。
+This run did not submit orders, query accounts or positions, update models, or start continuous market-data collection. Both order gates remained closed. SHA-256 hashes of the existing v2 model and observation report, frozen v3 experiment files, research database, and existing automation configuration matched their pre-collection values.
 
-历史数据访问成功不能证明拥有实时 SIP 权限。Alpaca 区分实时数据与历史数据权限；本轮仅测试已经结束的历史窗口，没有测试实时流或购买任何订阅。[官方权限说明](https://docs.alpaca.markets/us/docs/about-market-data-api)
+Successful historical access does not establish real-time SIP entitlement. Alpaca distinguishes real-time and historical data permissions; this run tested only completed historical windows, not real-time streams, and purchased no subscriptions. [Official data-access documentation](https://docs.alpaca.markets/us/docs/about-market-data-api)
 
-## 1. 实际采集范围
+## 1. Actual Collection Scope
 
-采集目录：`artifacts/marketdata/20260907-sip-crypto-audit/`。首次观察时间为 2026-09-07 约 10:19 UTC，不得倒填成历史当天已知。
+Capture directory: `artifacts/marketdata/20260907-sip-crypto-audit/`. The first observation was recorded at approximately 10:19 UTC on 2026-09-07; it must not be backdated as information known on the historical trading date.
 
-- 股票：SPY、JPM、XOM、WMT、JNJ；2026-09-04 的 13:30–20:00 UTC 常规交易时段；明确请求 `sip`。
-- BTC/USD：2026-09-06 的完整 UTC 日；明确使用 `crypto/us`，不代表全球加密市场。
-- 每个标的采集全时段一分钟 bar，另采集两个各 60 秒的报价窗口。股票目标时点为开盘后 5 分钟、收盘前 5 分钟；BTC 为 00:35 与 23:55 UTC。
-- 选价规则在采集前固定：目标时点起 30 秒内第一条有效报价；无有效报价或最早时间戳存在无法排序的不同报价，则不生成成本配对。
+- Stocks: SPY, JPM, XOM, WMT, and JNJ; the 13:30–20:00 UTC regular session on 2026-09-04; `sip` was explicitly requested.
+- BTC/USD: the full UTC day on 2026-09-06; explicitly using `crypto/us`, which does not represent the global cryptocurrency market.
+- Each symbol has full-session one-minute bars and two 60-second quote windows. Stock targets are 5 minutes after the open and 5 minutes before the close; BTC targets are 00:35 and 23:55 UTC.
+- The selection rule was fixed before collection: use the first valid quote within 30 seconds after the target. No cost pair is produced if no valid quote exists or if distinct quotes at the earliest timestamp cannot be sequenced.
 
-这些是数据诊断窗口，不是 v3 冻结实验的预测或标签。不能把本轮中间价变动标记为模型收益。
+These are data-diagnostic windows, not predictions or labels from the frozen v3 experiment. Midpoint changes observed in this run must not be labeled model returns.
 
-## 2. 分钟覆盖与价差样本
+## 2. Minute Coverage and Spread Samples
 
-| 标的 | 时段内有效分钟 / 应有分钟 | 缺失分钟 | 零成交量 bar | 选定报价对的往返价差近似，bps |
+| Symbol | Valid in-session minutes / Expected minutes | Missing minutes | Zero-volume bars | Approximate round-trip spread of the selected quote pair, bps |
 | --- | ---: | ---: | ---: | ---: |
 | SPY | 390 / 390 | 0 | 0 | 0.259 |
 | JPM | 390 / 390 | 0 | 0 | 8.860 |
@@ -30,57 +30,57 @@
 | JNJ | 388 / 390 | 2 | 0 | 13.021 |
 | BTC/USD | 1,319 / 1,440 | 121 | 921 | 3.974 |
 
-1 bps = 0.01%。表中数值为“入场全价差的一半 + 出场全价差的一半”，不是两次全价差相加；每次全价差按 `(ask − bid) / midpoint × 10000` 计算。它仅描述这两个时点的报价，不包含实际账户手续费、滑点、排队、冲击或部分成交，也不保证能按所示价格成交。
+1 bps = 0.01%. The table reports half the entry full spread plus half the exit full spread, not the sum of two full spreads. Each full spread is calculated as `(ask − bid) / midpoint × 10000`. This describes quotes at only those two instants. It excludes actual account fees, slippage, queueing, market impact, and partial fills, and does not guarantee execution at the displayed prices.
 
-关键发现：
+Key findings:
 
-- JNJ 缺少 16:59、17:09 UTC 两根分钟 bar；BTC 缺少 121 根。缺失被明确记录，没有填零、向前填充或伪造 bar。缺失原因仍待核实，不能直接归因于网络丢包。
-- BTC 的 921 根零成交量 bar 不能被当作真实成交证据。Alpaca 文档说明，其加密 bar 可包含报价中间价，无成交时成交量为零、价格来自报价；这与本轮观察相容，但不是对每根 bar 来源的逐笔证明。[官方加密数据口径](https://docs.alpaca.markets/us/docs/real-time-crypto-pricing-data)
-- 原始返回包含 5 根恰好落在时段结束边界的 bar。接口结束时间允许包含边界，分析统一采用 `[start, end)`，因此保留原始记录但不计入该时段覆盖率。[股票历史 bar 接口](https://docs.alpaca.markets/us/reference/stockbars)、[加密历史 bar 接口](https://docs.alpaca.markets/us/reference/cryptobars-1)
-- 原始报价中有 12 条未通过基本有效性检查，已排除出统计，但原始文件保留。未实现完整的交易所报价条件、交易状态和可成交性规则。
-- JPM、XOM、JNJ 的这一对报价价差近似已经超过 5 bps，提示统一低成本假设需要检验。单日两个时点不足以估计长期成本分布，因此本轮没有据此修改 v3 成本参数或重新选择模型。
+- JNJ is missing the minute bars at 16:59 and 17:09 UTC; BTC is missing 121 bars. Missing data is explicitly recorded, with no zero filling, forward filling, or fabricated bars. The cause remains unverified and must not be attributed directly to network packet loss.
+- The 921 zero-volume BTC bars are not evidence of executed trades. Alpaca documents that cryptocurrency bars may incorporate quote midpoints; when no trades occur, volume is zero and prices come from quotes. That is consistent with this observation, but it is not an event-by-event provenance verification for every bar. [Official cryptocurrency data definitions](https://docs.alpaca.markets/us/docs/real-time-crypto-pricing-data)
+- The raw responses include 5 bars exactly at session-end boundaries. The API permits an inclusive end timestamp; analysis consistently uses `[start, end)`, retaining those raw records but excluding them from session coverage. [Historical stock bars API](https://docs.alpaca.markets/us/reference/stockbars), [Historical cryptocurrency bars API](https://docs.alpaca.markets/us/reference/cryptobars-1)
+- Of the raw quotes, 12 failed basic validity checks and were excluded from statistics, while their raw files were retained. Complete exchange quote-condition, trading-status, and executability rules have not been implemented.
+- The approximate spreads for these quote pairs in JPM, XOM, and JNJ already exceed 5 bps, indicating that a uniform low-cost assumption needs testing. Two instants on one day are insufficient to estimate a long-run cost distribution, so this run did not change v3 cost parameters or reselect a model.
 
-报告还给出窗口内报价事件的价差分布。这是事件加权而非时间加权；报价更新快的时段权重更大，不能解读为平均持有时间对应的价差。
+The report also provides spread distributions across quote events within each window. These are event-weighted, not time-weighted: periods with faster quote updates receive more weight. They must not be interpreted as spreads averaged over holding time.
 
-## 3. 每个代码 section 的作用
+## 3. What Each Code Section Does
 
-| 模块 | 职责与边界 |
+| Module | Responsibilities and boundaries |
 | --- | --- |
-| `src/quantpaper/marketdata/client.py` | 只允许向固定 `data.alpaca.markets` 主机发出历史 bar/quote GET 请求。限制标的、时段、页数；拒绝重定向；不自动重试、不静默切换 SIP/IEX。密钥只用于请求认证，不写入结果或错误文本。 |
-| `src/quantpaper/marketdata/windows.py` | 用 XNYS 日历选择已结束的股票交易时段，处理假期、夏令时和提前收盘；加密按 UTC 日切分，均留出 30 分钟发布缓冲。它不是交易调度器。 |
-| `src/quantpaper/marketdata/quality.py` | 检查时间、OHLC、成交量、分钟缺口、重复/冲突记录和异常报价；保留纳秒精度；验证 symbol、feed、请求覆盖和观察时间，再计算有限的报价成本诊断。 |
-| `src/quantpaper/marketdata/storage.py` | 结果只能写入新的独立采集目录；拒绝已有目录与符号链接。创建式写入、同步磁盘、SHA-256 清单和读取校验，避免无意覆盖旧证据。哈希没有外部签名，不防止整套文件与清单同时被替换。 |
-| `src/quantpaper/marketdata/cli.py` | 提供 `capture` 和 `show`。采集前检查两层 Paper 开关均关闭；保存计划、18 份原始分段、报告及完成清单。与模型训练、shadow 数据库和订单通道隔离。 |
+| `src/quantpaper/marketdata/client.py` | Allows only historical bar/quote GET requests to the fixed `data.alpaca.markets` host. Bounds symbols, intervals, and page counts; rejects redirects; performs no automatic retries or silent SIP/IEX switching. Credentials are used only for request authentication and are never written to results or error text. |
+| `src/quantpaper/marketdata/windows.py` | Uses the XNYS calendar to select completed stock sessions, handling holidays, daylight saving time, and early closes. Cryptocurrency data is divided into UTC days, with a 30-minute publication buffer in both cases. This is not a trading scheduler. |
+| `src/quantpaper/marketdata/quality.py` | Checks timestamps, OHLC values, volume, missing minutes, duplicate/conflicting records, and abnormal quotes; preserves nanosecond precision; validates symbol, feed, request coverage, and observation time before calculating limited quote-cost diagnostics. |
+| `src/quantpaper/marketdata/storage.py` | Writes results only to a new, separate capture directory; rejects existing directories and symbolic links. Create-only writes, disk synchronization, SHA-256 manifests, and read-time verification help prevent accidental overwriting of prior evidence. Hashes have no external signature and do not protect against replacement of all files together with their manifest. |
+| `src/quantpaper/marketdata/cli.py` | Provides `capture` and `show`. Checks that both Paper gates are closed before collection; saves the plan, 18 raw segments, report, and completion manifest. It is isolated from model training, the shadow database, and order channels. |
 
-默认每个分段最多 3 页，每页最多 10,000 条；触及上限必须标记未完成。权限失败不会自动改用 IEX。SIP 与 IEX 不是可互换来源，Alpaca US 加密报价也不是全球综合报价。[股票接口的 feed 与分页定义](https://docs.alpaca.markets/us/reference/stockbars)
+By default, each segment is limited to 3 pages of up to 10,000 records each; reaching the limit must be marked incomplete. A permission failure does not trigger an automatic switch to IEX. SIP and IEX are not interchangeable sources, and Alpaca US cryptocurrency quotes are not a global consolidated quote. [Stock API feed and pagination definitions](https://docs.alpaca.markets/us/reference/stockbars)
 
-三个状态需要分别理解：
+Three statuses must be interpreted separately:
 
-- `status=captured`：请求及分页已完成，不代表数据质量或策略通过验收。
-- 标的 `complete`：仅表示分页完整；有分钟缺口仍可能为真。
-- 最新分析代码的 `source_metadata_valid`：来源字段和时间覆盖是否通过检查；无效时禁止输出成本配对。第一份冻结报告生成于这项额外检查加入之前，未覆盖重写；已用最新代码只读复算六个标的，均通过，原成本配对及 bar 计数完全一致。
+- `status=captured`: requests and pagination completed; this does not mean data quality or the strategy passed validation.
+- Per-symbol `complete`: pagination completeness only; it can remain true when minutes are missing.
+- `source_metadata_valid` in the latest analysis code: whether source fields and time coverage passed validation; invalid metadata blocks cost-pair output. The first frozen report was generated before this additional check was introduced and was not overwritten. All six symbols have been recomputed read-only with the latest code, passed the checks, and retained exactly the same original cost pairs and bar counts.
 
-## 4. 如何运行和查看
+## 4. Running and Viewing Results
 
-在项目目录使用现有 `.venv`，不要在聊天中发送密钥。依赖已在当前环境验证；`pyproject.toml` 的 `data` 可选依赖新增显式 `requests` 声明。
+Use the existing `.venv` from the project directory, and do not send credentials in chat. Dependencies have been verified in the current environment; in `pyproject.toml`, the `data` optional dependencies now explicitly declare `requests`.
 
 ```bash
-# 读取并校验已保存结果：无网络访问，不重训、不下单。
+# Read and verify saved results: no network access, retraining, or orders.
 .venv/bin/python main.py marketdata show --run-dir artifacts/marketdata/20260907-sip-crypto-audit
 
-# 手动采集最近已结束窗口；必须使用一个尚不存在的新目录名。
+# Manually collect the latest completed windows; use a new directory name that does not exist.
 .venv/bin/python main.py marketdata capture --run-dir artifacts/marketdata/NEW-CAPTURE-NAME --stock-feed sip
 
-# 离线测试。
+# Offline tests.
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-需要重现日期范围时，可显式添加 `--stock-session 2026-09-04 --crypto-session 2026-09-06`；再次请求的历史数据可能修订，因此必须作为新的观察版本保存，不能覆盖原始样本。
+To reproduce the date range, explicitly add `--stock-session 2026-09-04 --crypto-session 2026-09-06`. Historical data returned by a later request may be revised, so it must be saved as a new observation version rather than overwriting the original sample.
 
-本轮全项目 **175 项测试通过**，包括新增 47 项客户端、安全隔离、交易窗口和数据质量测试；依赖检查通过。仍有 NumPy/pandas 时间运算弃用警告，属于后续兼容性工作，不能当作零警告验收。真实请求另外验证了本机历史数据接入；离线 mock 测试不替代生产接口验收。
+The full project passed **175 tests** in this round, including 47 new tests for the client, safety isolation, trading windows, and data quality; dependency checks also passed. NumPy/pandas time-arithmetic deprecation warnings remain and require future compatibility work; this is not a zero-warning validation. Actual requests separately verified historical data access on this machine; offline mock tests do not replace production-interface validation.
 
-## 5. 接下来做什么
+## 5. Next Steps
 
-下一阶段应先固定多个交易日、多个时段的只读采集协议，分标的估计价差、缺失和报价更新分布，并核实可用的真实手续费及报价条件，再建立包含延迟和未成交情况的执行回放。前瞻观察需要记录实际到达时间；今天回填的历史行情不能充当过去已知的特征。
+The next stage should first freeze a read-only collection protocol spanning multiple trading days and intraday windows, estimate spread, missing-data, and quote-update distributions separately by symbol, and verify available actual fees and quote conditions. Execution replay should then incorporate latency and unfilled-order scenarios. Forward observations need actual arrival timestamps; historical data backfilled today cannot serve as features known in the past.
 
-本轮没有创建新的周期采集任务，没有期权真实行情验收，也没有训练更复杂模型。现阶段结果仍只支持继续研究，不支持开启自动交易或声称策略可盈利。
+This round did not create a recurring collection task, validate actual options market data, or train a more complex model. The results support further research only, not enabling automated trading or claiming that the strategy is profitable.
