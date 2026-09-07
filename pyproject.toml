@@ -25,12 +25,14 @@ paper = [
   "python-dotenv>=1,<2",
 ]
 data = [
+  "certifi>=2024.8.30",
   "duckdb>=1.4,<2",
   "exchange-calendars>=4.13,<5",
   "pandas>=2.2,<3",
   "python-dotenv>=1,<2",
   "alpaca-py>=0.42,<1",
   "requests>=2.32,<3",
+  "yfinance>=1.7,<2",
 ]
 
 [project.scripts]
@@ -43,6 +45,7 @@ quant-sources = "quantpaper.sources_cli:main"
 quant-shadow = "quantpaper.shadow_cli:main"
 quant-research = "quantpaper.research.cli:main"
 quant-evidence = "quantpaper.research.evidence_cli:main"
+quant-refresh-data = "quantpaper.research.refresh_cli:main"
 quant-marketdata = "quantpaper.marketdata.cli:main"
 
 [tool.setuptools.packages.find]

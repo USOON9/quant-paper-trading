@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from datetime import date
-import json
 import math
+import re
 from typing import Callable
-from urllib.request import Request, urlopen
 
 from ..source_records import FundamentalRecord
 from .common import FetchBatch, after_local_date, canonical_hash
+from .http import get_json as bounded_get_json
 
 
 SEC_BASE = "https://data.sec.gov"
@@ -28,9 +28,24 @@ JsonGetter = Callable[[str, dict[str, str]], object]
 
 
 def _default_get_json(url: str, headers: dict[str, str]) -> object:
-    request = Request(url, headers=headers)
-    with urlopen(request, timeout=30) as response:
-        return json.load(response)
+    return bounded_get_json(url, headers, allowed_hosts=frozenset({"data.sec.gov", "www.sec.gov"}),
+                            max_bytes=25_000_000)
+
+
+def _ticker(ticker: str) -> str:
+    clean = ticker.strip().upper() if isinstance(ticker, str) else ""
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9.-]{0,15}", clean, re.ASCII):
+        raise ValueError("SEC ticker is invalid")
+    return clean
+
+
+def _cik(value: object) -> str:
+    if type(value) not in (str, int):
+        raise ValueError("SEC company identifier is invalid")
+    text = str(value)
+    if not re.fullmatch(r"[0-9]{1,10}", text, re.ASCII) or int(text) == 0:
+        raise ValueError("SEC company identifier is invalid")
+    return text.zfill(10)
 
 
 def _available_after_filing(filed: str) -> str:
@@ -64,6 +79,8 @@ def parse_company_facts(
                     continue
                 value = observation.get("val")
                 try:
+                    if isinstance(value, bool):
+                        raise ValueError("boolean SEC fact")
                     numeric = float(value) if value is not None else None
                     if numeric is not None and not math.isfinite(numeric):
                         raise ValueError("nonfinite SEC fact")
@@ -105,28 +122,40 @@ def parse_company_facts(
 class SECCompanyFactsClient:
     def __init__(self, user_agent: str, get_json: JsonGetter = _default_get_json) -> None:
         clean_agent = user_agent.strip()
-        if "@" not in clean_agent or len(clean_agent) < 8:
+        if ("@" not in clean_agent or not 8 <= len(clean_agent) <= 256
+                or any(ord(char) < 32 or ord(char) == 127 for char in clean_agent)):
             raise ValueError("SEC_USER_AGENT must identify you and include a contact email")
         self.headers = {"User-Agent": clean_agent, "Accept": "application/json"}
         self.get_json = get_json
 
     def resolve_cik(self, ticker: str) -> str:
-        payload = self.get_json(SEC_TICKERS, self.headers)
+        clean = _ticker(ticker)
+        payload = self._read_json(SEC_TICKERS)
         if not isinstance(payload, dict):
             raise RuntimeError("SEC ticker mapping returned an unexpected payload")
-        clean = ticker.strip().upper()
-        for company in payload.values():
-            if isinstance(company, dict) and str(company.get("ticker", "")).upper() == clean:
-                return str(company["cik_str"]).zfill(10)
-        raise KeyError(f"SEC ticker mapping has no entry for {clean}")
+        matches = [company for company in payload.values()
+                   if isinstance(company, dict) and str(company.get("ticker", "")).upper() == clean]
+        if not matches:
+            raise KeyError("SEC ticker mapping has no matching entry")
+        if len(matches) != 1:
+            raise ValueError("SEC ticker mapping is ambiguous")
+        return _cik(matches[0].get("cik_str"))
+
+    def _read_json(self, url: str) -> object:
+        try:
+            return self.get_json(url, self.headers)
+        except Exception:
+            raise RuntimeError("SEC request failed") from None
 
     def fetch(self, ticker: str) -> FetchBatch[FundamentalRecord]:
-        clean = ticker.strip().upper()
+        clean = _ticker(ticker)
         cik = self.resolve_cik(clean)
         url = f"{SEC_BASE}/api/xbrl/companyfacts/CIK{cik}.json"
-        payload = self.get_json(url, self.headers)
+        payload = self._read_json(url)
         if not isinstance(payload, dict):
             raise RuntimeError("SEC Company Facts returned an unexpected payload")
+        if _cik(payload.get("cik")) != cik:
+            raise ValueError("SEC Company Facts company identifier does not match the request")
         records = parse_company_facts(payload, clean)
         return FetchBatch(
             source="sec-companyfacts",
