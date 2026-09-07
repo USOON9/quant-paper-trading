@@ -18,6 +18,11 @@ sys.path.insert(0, str(SOURCE_ROOT))
 os.chdir(PROJECT_ROOT)
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "catalog":
+        from quantpaper.research.catalog_cli import main as catalog_main
+
+        raise SystemExit(catalog_main(sys.argv[2:]))
+
     if len(sys.argv) > 1 and sys.argv[1] == "refresh-data":
         from quantpaper.research.refresh_cli import main as refresh_main
 

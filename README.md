@@ -18,6 +18,10 @@ The [research refresh workflow](docs/research-data-refresh.md) adds explicitly r
 
 Each attempt uses a new directory under `artifacts/research-refresh/`. Yahoo collection does not repair or fill missing prices and does not overwrite `data/yahoo/` model inputs. SEC identity and FRED pagination/date bounds are checked before ingestion; successful data and audit rows commit together per source. Failures and missing configuration remain explicit. Existing databases must already have the full schema: the refresh does not create or migrate them. This changes research data, not trained models, shadow signals, schedules, or trading permissions.
 
+## Observed data catalog
+
+The [observed data catalog](docs/research-data-catalog.md) adds an independent identity-assertion audit and current FRED units, frequency, and seasonal-adjustment metadata. Use `python main.py catalog --help`. It preserves the entire warehouse and earlier evidence packets, groups only exact same-source descriptions, and excludes newly observed metadata from earlier decision cutoffs. It does not create features, resolve historical security identity, or change the model.
+
 ## Status after the 2026-09-05 review
 
 See the [review report](docs/quant-review-2026-09-05.md) for findings, fixes, evaluation conventions, and remaining work. The current model still fails admission: 12-fold out-of-sample AUC is 0.5137; at 5 bps round-trip cost, cumulative return is approximately 1.15%, Sharpe 0.066, and maximum drawdown approximately -26.01%. These are theoretical intraday research results across six assets, not realized trading returns. At 10 bps, return is approximately -32.05%. Corrected statistical conventions are not evidence of an improved or profitable model.

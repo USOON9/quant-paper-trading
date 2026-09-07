@@ -46,6 +46,7 @@ quant-shadow = "quantpaper.shadow_cli:main"
 quant-research = "quantpaper.research.cli:main"
 quant-evidence = "quantpaper.research.evidence_cli:main"
 quant-refresh-data = "quantpaper.research.refresh_cli:main"
+quant-catalog = "quantpaper.research.catalog_cli:main"
 quant-marketdata = "quantpaper.marketdata.cli:main"
 
 [tool.setuptools.packages.find]
