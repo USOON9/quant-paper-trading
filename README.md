@@ -160,7 +160,7 @@ Reports equity, PnL, return, maximum drawdown, fill count, rejected orders, and 
 
 ### 9. `alpaca.py` — Restricted paper gateway
 
-The legacy gateway retains read-only functionality. Its direct submission and cancel-all methods are disabled to prevent bypassing lifecycle audits. Restricted manual Paper tests go through `alpaca_paper.py`, with fixed Paper mode, two gates, precise state checks, per-key locking, and persistent blocking after ambiguous failures.
+The legacy gateway retains read-only functionality. Its direct submission and cancel-all methods are disabled to prevent bypassing lifecycle audits. The [supervised SPY Paper pilot](docs/paper-pilot.md) uses fixed Paper mode, two gates, fresh preflight, per-key and per-account locks, one attempt per New York date, deterministic order IDs, and durable blocking after ambiguous failures. This is an engineering round trip, not automated ML trading.
 
 ### 10. `configs/paper.toml` — Parameters and risk limits
 
@@ -237,29 +237,23 @@ Read-only checks do not submit orders:
 ```bash
 python main.py alpaca status
 python main.py alpaca quote --symbol SPY
+python main.py alpaca preflight --symbol SPY --notional 5
+# Fully synthetic: no credentials or real broker requests.
+python main.py alpaca rehearse
 ```
 
-The connectivity test submits a limit order at a very low price and immediately requests its cancellation. It requires explicitly enabling the first Paper gate in `.env`:
+The old `submit-cancel` command is disabled. The [guarded pilot procedure](docs/paper-pilot.md) now requires a separate user-approved attempt, a fresh whole-account/asset/quote preflight, an explicit run ID, and both execution gates. The following is documentation only, not an instruction to enable trading:
 
 ```dotenv
 ENABLE_ALPACA_PAPER=YES_I_UNDERSTAND
-```
-
-```bash
-python main.py alpaca submit-cancel --symbol SPY --quantity 1
-```
-
-The paper round-trip fill test also requires the second gate and is restricted by code to an open market and 1–25 dollars per test:
-
-```dotenv
 ENABLE_ALPACA_PAPER_ROUND_TRIP=YES_RUN_SMALL_ROUND_TRIP
 ```
 
 ```bash
-python main.py alpaca round-trip --symbol SPY --notional 5
+python main.py alpaca round-trip --symbol SPY --notional 5 --run-id supervised-spy-001
 ```
 
-All order lifecycles are written to `artifacts/alpaca-paper-audit.jsonl`. The adapter is fixed to Alpaca's `paper=True`; there is no parameter for switching to a live-trading endpoint.
+The first pilot is SPY-only, $1–$25 in whole cents, with no existing positions or orders anywhere in the account and at most one attempted cycle per New York date. A changed API key or audit path cannot reset the account-scoped budget on the same host. All order lifecycles are written to `artifacts/alpaca-paper-audit.jsonl`, with account reservations under `data/paper-pilot/`. The adapter is fixed to Alpaca's `paper=True`; its transport rejects live hosts, disables automatic POST retries, and supports GET-only preflight.
 
 After a timeout or uncertain submission result, query the original `client_order_id` rather than retrying blindly. A persistent block is stored at the fixed project path `data/paper-state/<key-hash>.reconciliation.json`. Changing the audit-log path cannot clear a block for the same key; legacy markers beside older logs are also recognized. Recovery requires manually reconciling broker orders and positions and retaining evidence before deciding how to proceed. Do not delete markers merely to rerun a test. A partial fill is not a complete fill, and acceptance of a cancellation request is not confirmation of a terminal order state.
 

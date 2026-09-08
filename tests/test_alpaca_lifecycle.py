@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,8 @@ except ImportError:
 
 
 def order(order_id, status, qty="0"):
+    order_id = {"entry": "00000000-0000-4000-8000-000000000001",
+                "exit": "00000000-0000-4000-8000-000000000002"}.get(order_id, order_id)
     return SimpleNamespace(id=order_id, client_order_id="client-" + order_id,
                            status=status, filled_qty=qty, filled_avg_price="100")
 
@@ -26,15 +29,39 @@ class PaperLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        root = Path(self.directory.name)
+        root = Path(self.directory.name).resolve()
         self.service = AlpacaPaperService.__new__(AlpacaPaperService)
         self.service.trading = Mock()
         self.service.audit = AuditTrail(root / "audit.jsonl")
         self.service._lock_path = root / "operation.lock"
         self.service._incident_path = root / "reconciliation.json"
         self.service._legacy_incident_paths = ()
-        self.service.trading.get_account.return_value = SimpleNamespace(trading_blocked=False, account_blocked=False)
-        self.service.trading.get_clock.return_value = SimpleNamespace(is_open=True)
+        self.run_id = "synthetic-lifecycle-001"
+        pilot_path = patch("quantpaper.alpaca_paper.PAPER_PILOT_DIRECTORY", root / "paper-pilot", create=True)
+        pilot_path.start()
+        self.addCleanup(pilot_path.stop)
+        lock_path = patch("quantpaper.alpaca_paper.tempfile.gettempdir", return_value=str(root))
+        lock_path.start()
+        self.addCleanup(lock_path.stop)
+        self.service.trading.get_account.return_value = SimpleNamespace(
+            id="11111111-1111-4111-8111-111111111111", status="ACTIVE", currency="USD",
+            trading_blocked=False, account_blocked=False, trade_suspended_by_user=False,
+            cash="100000", buying_power="100000",
+            equity="100000", last_equity="100000",
+        )
+        now = datetime.now(timezone.utc)
+        self.service.trading.get_clock.return_value = SimpleNamespace(
+            is_open=True, timestamp=now, next_open=now + timedelta(days=1),
+            next_close=now + timedelta(hours=1),
+        )
+        self.service.trading.get_asset.return_value = SimpleNamespace(
+            symbol="SPY", status="active", asset_class="us_equity", tradable=True, fractionable=True,
+        )
+        self.service.stock_data = Mock()
+        self.service.stock_data.get_stock_latest_quote.return_value = {
+            "SPY": SimpleNamespace(timestamp=now, bid_price=500, ask_price=500.02,
+                                   bid_size=100, ask_size=100),
+        }
         self.service.trading.get_all_positions.return_value = []
         self.service.trading.get_orders.return_value = []
         self.service.status = Mock(return_value={"positions": [], "open_orders": 0})
@@ -44,6 +71,34 @@ class PaperLifecycleTests(unittest.TestCase):
         })
         gates.start()
         self.addCleanup(gates.stop)
+
+    def prepare_orders(self, submitted, *, states=(), settled=None):
+        submitted = iter(submitted)
+        states = iter(states)
+        requests = {}
+
+        def bind(result, request):
+            result.client_order_id = request.client_order_id
+            result.symbol = request.symbol
+            result.side = request.side
+            result.type = "market"
+            return result
+
+        def submit(*, order_data):
+            result = bind(next(submitted), order_data)
+            requests[str(result.id)] = order_data
+            return result
+
+        def poll(order_id):
+            return bind(next(states), requests[str(order_id)])
+
+        self.service.trading.submit_order.side_effect = submit
+        self.service.trading.get_order_by_id.side_effect = poll
+        if settled is not None:
+            settled = iter(settled)
+            def settle(order_id, *args, **kwargs):
+                return bind(next(settled), requests[str(order_id)])
+            self.service._settle_order = Mock(side_effect=settle)
 
     @patch("quantpaper.alpaca_paper.time.sleep")
     def test_partially_filled_is_not_terminal_or_filled(self, sleep):
@@ -56,13 +111,12 @@ class PaperLifecycleTests(unittest.TestCase):
 
     @patch("quantpaper.alpaca_paper.time.sleep")
     def test_partial_entry_cancellation_unwinds_only_confirmed_quantity(self, sleep):
-        self.service.trading.submit_order.side_effect = [order("entry", "new"), order("exit", "new")]
         exact_qty = "0.006487141"
-        self.service.trading.get_order_by_id.side_effect = [
+        self.prepare_orders([order("entry", "new"), order("exit", "new")], states=[
             order("entry", "partially_filled", "0.001"), order("entry", "canceled", exact_qty),
             order("exit", "filled", exact_qty),
-        ]
-        result = self.service.round_trip_stock("SPY", Decimal("5"))
+        ])
+        result = self.service.round_trip_stock("SPY", Decimal("5"), run_id=self.run_id)
         request = self.service.trading.submit_order.call_args_list[1].kwargs["order_data"]
         self.assertEqual(request.to_request_fields()["qty"], exact_qty)
         self.assertEqual(result["filled_qty"], exact_qty)
@@ -76,7 +130,7 @@ class PaperLifecycleTests(unittest.TestCase):
     def test_existing_symbol_position_blocks_before_order_submission(self):
         self.service.trading.get_all_positions.return_value = [SimpleNamespace(symbol="SPY", qty="1")]
         with self.assertRaisesRegex(PaperReconciliationRequired, "existing position"):
-            self.service.round_trip_stock("SPY", Decimal("5"))
+            self.service.round_trip_stock("SPY", Decimal("5"), run_id=self.run_id)
         self.service.trading.submit_order.assert_not_called()
 
     def test_ambiguous_submission_recovers_same_id_without_resubmission(self):
@@ -92,14 +146,14 @@ class PaperLifecycleTests(unittest.TestCase):
         self.service.trading.submit_order.side_effect = TimeoutError("network")
         self.service.trading.get_order_by_client_id.side_effect = TimeoutError("network")
         with self.assertRaisesRegex(PaperReconciliationRequired, "outcome unknown"):
-            self.service.round_trip_stock("SPY", Decimal("5"))
+            self.service.round_trip_stock("SPY", Decimal("5"), run_id=self.run_id)
         self.assertTrue(self.service._incident_path.exists())
         with self.assertRaisesRegex(PaperReconciliationRequired, "previous lifecycle"):
-            self.service.round_trip_stock("SPY", Decimal("5"))
+            self.service.round_trip_stock("SPY", Decimal("5"), run_id=self.run_id)
         self.service.trading.submit_order.assert_called_once()
 
     def test_alternate_audit_path_cannot_bypass_key_scoped_incident(self):
-        root = Path(self.directory.name)
+        root = Path(self.directory.name).resolve()
         with (
             patch("quantpaper.alpaca_paper.TradingClient", return_value=self.service.trading),
             patch("quantpaper.alpaca_paper.StockHistoricalDataClient"),
@@ -107,21 +161,22 @@ class PaperLifecycleTests(unittest.TestCase):
         ):
             credentials = PaperCredentials("synthetic-test-key", "synthetic-test-secret")
             first = AlpacaPaperService(credentials, root / "first" / "audit.jsonl")
+            first.stock_data = self.service.stock_data
             self.service.trading.submit_order.side_effect = TimeoutError("network")
             self.service.trading.get_order_by_client_id.side_effect = TimeoutError("network")
             with self.assertRaisesRegex(PaperReconciliationRequired, "outcome unknown"):
-                first.round_trip_stock("SPY", Decimal("5"))
+                first.round_trip_stock("SPY", Decimal("5"), run_id=self.run_id)
             second = AlpacaPaperService(credentials, root / "different" / "audit.jsonl")
             self.assertEqual(first._incident_path, second._incident_path)
             self.assertTrue(second._incident_path.exists())
             self.service.trading.get_account.reset_mock()
             with self.assertRaisesRegex(PaperReconciliationRequired, "previous lifecycle"):
-                second.round_trip_stock("SPY", Decimal("5"))
+                second.round_trip_stock("SPY", Decimal("5"), run_id=self.run_id)
             self.service.trading.get_account.assert_not_called()
             self.service.trading.submit_order.assert_called_once()
 
     def test_legacy_adjacent_marker_is_preserved_and_promoted_to_key_block(self):
-        root = Path(self.directory.name)
+        root = Path(self.directory.name).resolve()
         audit_path = root / "legacy-audit.jsonl"
         legacy_path = audit_path.with_suffix(".reconciliation.json")
         legacy_path.write_text('{"symbol":"SPY"}')
@@ -133,12 +188,12 @@ class PaperLifecycleTests(unittest.TestCase):
             credentials = PaperCredentials("legacy-synthetic-test-key", "synthetic-test-secret")
             first = AlpacaPaperService(credentials, audit_path)
             with self.assertRaisesRegex(PaperReconciliationRequired, "legacy lifecycle"):
-                first.round_trip_stock("SPY", Decimal("5"))
+                first.round_trip_stock("SPY", Decimal("5"), run_id=self.run_id)
             self.assertTrue(legacy_path.exists())
             self.assertTrue(first._incident_path.exists())
             second = AlpacaPaperService(credentials, root / "another-audit.jsonl")
             with self.assertRaisesRegex(PaperReconciliationRequired, "previous lifecycle"):
-                second.round_trip_stock("SPY", Decimal("5"))
+                second.round_trip_stock("SPY", Decimal("5"), run_id=self.run_id)
             self.service.trading.submit_order.assert_not_called()
 
     def test_cancel_ack_is_not_claimed_as_confirmed_cancellation(self):
@@ -147,17 +202,17 @@ class PaperLifecycleTests(unittest.TestCase):
             self.service._cancel_and_reconcile("entry")
 
     def test_partial_exit_reports_residual_and_retains_reconciliation_marker(self):
-        self.service.trading.submit_order.side_effect = [order("entry", "new"), order("exit", "new")]
-        self.service._settle_order = Mock(side_effect=[order("entry", "filled", "0.05"), order("exit", "canceled", "0.02")])
+        self.prepare_orders([order("entry", "new"), order("exit", "new")], settled=[
+            order("entry", "filled", "0.05"), order("exit", "canceled", "0.02")])
         with self.assertRaisesRegex(PaperReconciliationRequired, "residual qty 0.03"):
-            self.service.round_trip_stock("SPY", Decimal("5"))
+            self.service.round_trip_stock("SPY", Decimal("5"), run_id=self.run_id)
         self.assertTrue(self.service._incident_path.exists())
         self.assertEqual(self.service.trading.submit_order.call_count, 2)
 
     def test_nonfinite_notional_is_rejected_without_broker_access(self):
         for value in ("NaN", "Infinity", "-Infinity"):
             with self.assertRaises(ValueError):
-                self.service.round_trip_stock("SPY", Decimal(value))
+                self.service.round_trip_stock("SPY", Decimal(value), run_id=self.run_id)
         self.service.trading.get_account.assert_not_called()
 
 
