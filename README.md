@@ -22,6 +22,12 @@ Each attempt uses a new directory under `artifacts/research-refresh/`. Yahoo col
 
 The [observed data catalog](docs/research-data-catalog.md) adds an independent identity-assertion audit and current FRED units, frequency, and seasonal-adjustment metadata. Use `python main.py catalog --help`. It preserves the entire warehouse and earlier evidence packets, groups only exact same-source descriptions, and excludes newly observed metadata from earlier decision cutoffs. It does not create features, resolve historical security identity, or change the model.
 
+## As-of research features
+
+The [research feature pipeline](docs/research-features.md) computes eleven price/volume and macro-context features from the existing warehouse and verified observed catalog. Use `python main.py features --help`. Each create-only archive retains formulas, units, explicit missing-value statuses, source provenance, and copied inputs for offline recomputation. Source availability, local ingestion, catalog timing, identity binding, and economic observation-date age are checked before a value is usable.
+
+This separate `observed_context_v1` contract does not modify the existing model or its feature vector. A complete current research row is not a historical training dataset, prediction, performance result, or trading approval. No credentials are read, data fetched, warehouse modified, or orders submitted by this workflow.
+
 ## Status after the 2026-09-05 review
 
 See the [review report](docs/quant-review-2026-09-05.md) for findings, fixes, evaluation conventions, and remaining work. The current model still fails admission: 12-fold out-of-sample AUC is 0.5137; at 5 bps round-trip cost, cumulative return is approximately 1.15%, Sharpe 0.066, and maximum drawdown approximately -26.01%. These are theoretical intraday research results across six assets, not realized trading returns. At 10 bps, return is approximately -32.05%. Corrected statistical conventions are not evidence of an improved or profitable model.
